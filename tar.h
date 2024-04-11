@@ -23,6 +23,8 @@ struct tar_entry {
   /** File offset to the entry data. */
   unsigned int data_offset;
 
+  char *rrw_data;
+
   /** Length of the data. */
   size_t length;
 
@@ -39,13 +41,13 @@ struct tar_entry {
   gid_t gid;
 
   /** UNIX timestamp of last access. */
-  struct timespec atime;
+  struct timespec64 atime;
 
   /** UNIX timestamp of last modification. */
-  struct timespec mtime;
+  struct timespec64 mtime;
 
   /** UNIX timestamp of creation. */
-  struct timespec ctime;
+  struct timespec64 ctime;
 
   /** Next entry, or \c NULL if none. */
   struct tar_entry *next;

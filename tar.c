@@ -75,7 +75,7 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
   unsigned int mode = 0;
   uid_t uid = 0;
   gid_t gid = 0;
-  struct timespec atime, mtime, ctime;
+  struct timespec64 atime, mtime, ctime;
 
   // Read the header, and return NULL if there can't be a header.
   if (tarfs_read(&header, sizeof(header), offset, sb) != sizeof(header)) {
@@ -111,16 +111,16 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
   }
 
   // Modification time is the most likely to be present
-  if (kstrtoul(header.mtime, OCTAL, &mtime.tv_sec) != 0) {
+  if (kstrtoll(header.mtime, OCTAL, &mtime.tv_sec) != 0) {
     mtime.tv_sec = 0;
     mtime.tv_nsec = 0;
   }
 
-  if (kstrtoul(header.atime, OCTAL, &atime.tv_sec) != 0) {
+  if (kstrtoll(header.atime, OCTAL, &atime.tv_sec) != 0) {
     atime = mtime; // Copy mtime if not set
   }
 
-  if (kstrtoul(header.ctime, OCTAL, &ctime.tv_sec) != 0) {
+  if (kstrtoll(header.ctime, OCTAL, &ctime.tv_sec) != 0) {
     ctime = mtime; // Copy mtime if not set
   }
 
@@ -206,6 +206,9 @@ void tar_free(struct tar_entry *entry)
     else
       kfree(entry->basename);
 
+    if (entry->rrw_data)
+      kfree(entry->rrw_data);
+      
     kfree(entry);
     entry = next;
   }

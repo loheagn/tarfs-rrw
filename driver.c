@@ -103,7 +103,7 @@ static int tarfs_file_release(struct inode *inode, struct file *file)
  * @param flags lookup flags
  * @return \c NULL
  */
-static struct posix_acl *tarfs_get_acl(struct inode *inode, int flags)
+static struct posix_acl *tarfs_get_acl(struct mnt_idmap *idmap, struct dentry *d, int flags)
 {
   return NULL;
 }
@@ -284,7 +284,7 @@ static int tarfs_fill_sb(struct super_block *sb, void *data, int silent)
   struct inode *root = NULL;
   struct tar_entry *entry = NULL;
 
-  sb->s_flags |= MS_RDONLY | MS_NOATIME; /* This fs is read-only */
+  sb->s_flags |= SB_RDONLY | SB_NOATIME; /* This fs is read-only */
   sb->s_op = &tarfs_super_ops;
 
   if (!(entry = tar_open(sb))) {
@@ -303,10 +303,10 @@ static int tarfs_fill_sb(struct super_block *sb, void *data, int silent)
   root->i_sb = sb;
   root->i_op = &tarfs_dir_inode_operations;
   root->i_fop = &tarfs_dir_operations;
-  root->i_atime = CURRENT_TIME;
-  root->i_mtime = CURRENT_TIME;
-  root->i_ctime = CURRENT_TIME;
-  inode_init_owner(root, NULL, ROOT_INO_MODE);
+  ktime_get_coarse_real_ts64(&(root->i_atime));
+  ktime_get_coarse_real_ts64(&(root->i_mtime));
+  ktime_get_coarse_real_ts64(&(root->i_ctime));
+  inode_init_owner(&nop_mnt_idmap, root, NULL, ROOT_INO_MODE);
 
   if (!(sb->s_root = d_make_root(root))) {
     pr_err("failed to create root inode");
@@ -369,7 +369,7 @@ static const struct inode_operations tarfs_dir_inode_operations = {
 
 static const struct inode_operations tarfs_symlink_inode_operations = {
 	.get_link	 = simple_get_link,
-  .readlink  = generic_readlink,
+  .readlink  = vfs_readlink,
   .get_acl   = tarfs_get_acl,
 };
 
