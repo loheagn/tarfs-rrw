@@ -7,3 +7,5 @@ modules.order
 *.mod.c
 .vscode
 mnt
+test-dir
+test.tar
