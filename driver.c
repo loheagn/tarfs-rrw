@@ -27,6 +27,67 @@ static const struct inode_operations tarfs_file_inode_operations;
 static const struct inode_operations tarfs_symlink_inode_operations;
 static const struct file_operations tarfs_dir_operations;
 static const struct file_operations tarfs_file_operations;
+static const struct file_operations tarfs_chunk_file_operations;
+
+const char* NFS_PATH_PREFIX = "/root/tarball/nfs_blocks/";
+const char* LOCAL_PATH_PREFIX = "/root/local_blocks/";
+
+static char* local_path(const char* key) {
+  int len = strlen(key) + strlen(LOCAL_PATH_PREFIX) + 1;
+  char *result = kmalloc(len, GFP_KERNEL);
+  
+  snprintf(result, len, "%s%s", LOCAL_PATH_PREFIX, key);
+  return result;
+}
+
+static char* nfs_path(const char* key) {
+  int len = strlen(key) + strlen(NFS_PATH_PREFIX) + 1;
+  char *result = kmalloc(len, GFP_KERNEL);
+  
+  snprintf(result, len, "%s%s", NFS_PATH_PREFIX, key);
+  return result;
+}
+
+
+static size_t read_from_chunk(char __user *userbuf, struct chunk_info *chunk,  loff_t offset, size_t count) {
+  size_t want_cnt = min_t(size_t, count, chunk->length-offset);
+  char *file_path = nfs_path(chunk->key);
+  struct file *f = filp_open(file_path, O_RDONLY, 0);
+  if (IS_ERR_OR_NULL(f)) {
+    printk(KERN_ERR "loheagn Failed to open file %s\n", file_path);
+    return 0;
+  }
+
+  char *buf = kmalloc(want_cnt, GFP_KERNEL);
+  kernel_read(f, buf, want_cnt, &offset);
+  size_t no_copied = copy_to_user(userbuf, buf, want_cnt);
+  kfree(buf);
+
+  filp_close(f, NULL);
+  return want_cnt-no_copied;
+}
+
+static size_t read_by_chunk(char __user *userbuf,  struct tar_entry* entry, size_t advanced, loff_t offset) {
+  size_t read_cnt = 0;
+  int block_idx = offset / RRW_BLOCK_SIZE;
+  loff_t offset_in_block = offset%RRW_BLOCK_SIZE;
+
+  while (read_cnt < advanced && block_idx < entry->chunk_count) {
+    struct chunk_info* chunk = entry->chunks + block_idx;
+    
+    size_t this_read_cnt = read_from_chunk(userbuf+read_cnt, chunk, offset_in_block, advanced - read_cnt);
+
+    read_cnt += this_read_cnt;
+    offset_in_block += this_read_cnt;
+    if (offset_in_block >= RRW_BLOCK_SIZE) {
+      block_idx++;
+      offset_in_block = 0;
+    }
+  }
+
+  return advanced - read_cnt;
+}
+
 
 /**
  * @brief Finds an tar entry by its inode number.
@@ -63,7 +124,6 @@ static ssize_t tarfs_file_read(struct file *file, char __user *userbuf,
   struct tar_entry *entry;
   size_t advanced;
   unsigned long not_copied;
-  void *buffer = NULL;
 
   if (!root)
     return -ENOENT;
@@ -72,10 +132,47 @@ static ssize_t tarfs_file_read(struct file *file, char __user *userbuf,
   if (!entry)
     return -ENOENT;
 
-  buffer = kzalloc(count, GFP_KERNEL);
-  advanced = tar_read(sb, entry, *pos, buffer, count);
-  not_copied = copy_to_user(userbuf, buffer, advanced);
-  kfree(buffer);
+  if (count > entry->length-*pos) {
+    advanced = entry->length-*pos;
+  } else {
+    advanced = count;
+  }
+
+  not_copied = copy_to_user(userbuf, entry->rrw_data + *pos, advanced);
+
+  if (not_copied > advanced)
+    return -EBADF; // Is this a good error code?
+
+  advanced -= not_copied;
+  *pos += advanced;
+
+  return advanced;
+}
+
+static ssize_t tarfs_chunk_file_read(struct file *file, char __user *userbuf,
+                                   size_t count, loff_t *pos)
+{
+  struct inode *inode = file_inode(file);
+  struct super_block *sb = inode->i_sb;
+  struct tar_entry *root = (struct tar_entry *) sb->s_fs_info;
+  struct tar_entry *entry;
+  size_t advanced;
+  unsigned long not_copied;
+
+  if (!root)
+    return -ENOENT;
+
+  entry = tarfs_find_by_inode(root, inode->i_ino);
+  if (!entry)
+    return -ENOENT;
+
+  if (count > entry->length-*pos) {
+    advanced = entry->length-*pos;
+  } else {
+    advanced = count;
+  }
+
+  not_copied = read_by_chunk(userbuf, entry, advanced, *pos);
 
   if (not_copied > advanced)
     return -EBADF; // Is this a good error code?
@@ -177,6 +274,11 @@ static struct inode *tarfs_build_inode(struct super_block *sb,
       inode->i_link = entry->header.linkname;
       inode->i_op = &tarfs_symlink_inode_operations;
       break;
+    case REGTYPE:
+    case AREGTYPE:
+      inode->i_op = &tarfs_file_inode_operations;
+      inode->i_fop = &tarfs_chunk_file_operations;
+      break;
     default:
       inode->i_op = &tarfs_file_inode_operations;
       inode->i_fop = &tarfs_file_operations;
@@ -232,6 +334,28 @@ static struct dentry *tarfs_lookup(struct inode *dir, struct dentry *dentry,
 
   kfree(dir_path);
 	return d_splice_alias(inode, dentry);
+}
+
+int readlink_copy(char __user *buffer, int buflen, const char *link)
+{
+	int len = PTR_ERR(link);
+	if (IS_ERR(link))
+		goto out;
+
+	len = strlen(link);
+	if (len > (unsigned) buflen)
+		len = buflen;
+	if (copy_to_user(buffer, link, len))
+		len = -EFAULT;
+out:
+	return len;
+}
+
+static int tarfs_readlink(struct dentry *dentry, char __user *buf, int buflen) {
+  struct inode *inode = d_inode(dentry);
+  char *link = inode->i_link;
+  int res = readlink_copy(buf, buflen, link);
+  return res;
 }
 
 /**
@@ -352,6 +476,14 @@ static const struct file_operations tarfs_file_operations = {
   .release  = tarfs_file_release,
 };
 
+static const struct file_operations tarfs_chunk_file_operations = {
+  .llseek   = generic_file_llseek,
+  // .read     = tarfs_chunk_file_read,
+  .read = tarfs_file_read,
+  .open     = generic_file_open,
+  .release  = tarfs_file_release,
+};
+
 static const struct inode_operations tarfs_file_inode_operations = {
   .get_acl  = tarfs_get_acl,
 };
@@ -369,7 +501,7 @@ static const struct inode_operations tarfs_dir_inode_operations = {
 
 static const struct inode_operations tarfs_symlink_inode_operations = {
 	.get_link	 = simple_get_link,
-  .readlink  = vfs_readlink,
+  .readlink  = tarfs_readlink,
   .get_acl   = tarfs_get_acl,
 };
 

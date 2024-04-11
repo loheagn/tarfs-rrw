@@ -6,6 +6,13 @@
 #include <linux/types.h>
 #include "gnutar.h"
 
+#define RRW_BLOCK_SIZE 4096
+
+struct chunk_info {
+  char key[65];
+  size_t length;
+};
+
 /** Describes access to an entry in a tar file. */
 struct tar_entry {
   /** The entry header. */
@@ -24,6 +31,9 @@ struct tar_entry {
   unsigned int data_offset;
 
   char *rrw_data;
+
+  int chunk_count;
+  struct chunk_info* chunks;
 
   /** Length of the data. */
   size_t length;

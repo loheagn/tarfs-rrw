@@ -1,6 +1,7 @@
 #include <linux/slab.h>
 #include <linux/stat.h>
 #include <linux/fs.h>
+#include <linux/byteorder/generic.h>
 
 #include "tar.h"
 #include "device.h"
@@ -15,6 +16,7 @@ mode_t tar_type_to_posix(int typeflag)
   switch(typeflag) {
     case REGTYPE:
     case AREGTYPE:
+    case 'o':
       return S_IFREG;
     case DIRTYPE:
       return S_IFDIR;
@@ -29,6 +31,18 @@ mode_t tar_type_to_posix(int typeflag)
     default:
       return 0;
   }
+}
+
+const char hex_table[16] = "0123456789abcdef";
+
+static void hex_encode(char *dst, const char* src) {
+  int j = 0;
+  for (int i = 0; i < 32; i++) {
+    char v = *(src+i);
+    dst[j++] = hex_table[v >> 4];
+    dst[j++] = hex_table[v & 0xf];
+  }
+  dst[j] = 0x0;
 }
 
 /**
@@ -70,6 +84,9 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
   struct star_header header;
   char *full_name = NULL;
   char *basename = NULL;
+  char *rrw_data = NULL;
+  struct chunk_info * chunks = NULL;
+  int chunk_count = 0;
   struct tar_entry *entry = NULL;
   unsigned int length = 0;
   unsigned int mode = 0;
@@ -83,10 +100,17 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
     return NULL;
   }
 
-  // Check for the header magic value
-  if (memcmp(header.magic, OLDGNU_MAGIC, sizeof(header.magic)) != 0) {
+  if (header.magic[0] != 'u') {
     return NULL;
   }
+
+  // Check for the header magic value
+  // pr_info("loheagn %s %s", header.magic, OLDGNU_MAGIC);
+  // int re = memcmp(header.magic, OLDGNU_MAGIC, sizeof(header.magic)) ;
+  // if (re != 0) {
+  //   pr_info("loheagn memcmp re %d", re);
+  //   return NULL;
+  // }
 
   // Parse the data length from the header
   if (kstrtouint(header.size, OCTAL, &length) != 0) {
@@ -143,13 +167,63 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
     full_name = basename + strlen(basename);
   }
 
+  unsigned int data_offset = offset + sizeof(header) + ALIGN_SECTOR(sizeof(header));
+
+  // read the data
+    pr_info("loheagn get length %d for %s/%s", length, full_name, basename);
+  if (length) {
+    // if (header.typeflag == REGTYPE || header.typeflag == AREGTYPE) {
+    //   char * buf =  kmalloc(length, GFP_KERNEL);
+    //   if (tarfs_read(buf, length, data_offset, sb) != length) {
+    //     kfree(buf);
+    //     buf = NULL;
+    //   }
+    //   if (buf) {
+    //     unsigned long * real_size_ptr = (unsigned long *) buf;
+    //     size_t real_size = be64_to_cpu(*real_size_ptr);
+    //     size_t read = 8;
+
+    //     chunk_count = real_size/RRW_BLOCK_SIZE;
+    //     if (real_size%RRW_BLOCK_SIZE) {
+    //       chunk_count++;
+    //     }
+
+    //     chunks = kmalloc(sizeof(struct chunk_info)*chunk_count, GFP_KERNEL);
+
+    //     struct chunk_info *chunk = chunks;
+    //     while (read < length) {
+    //       hex_encode(chunk->key, buf+read);
+    //       read += 32;
+
+    //       unsigned long * ptr = (unsigned long *) (buf+read);
+    //       chunk->length = be64_to_cpu(*ptr);
+    //       read+=8;
+
+    //       chunk++;
+    //     }
+
+    //     length = real_size;
+    //     kfree(buf);
+    //   }
+    // } else {
+      rrw_data = kmalloc(length, GFP_KERNEL);
+      if (tarfs_read(rrw_data, length, data_offset, sb) != length) {
+        kfree(rrw_data);
+        rrw_data = NULL;
+      }
+    // }
+  }
+
   // Fill in structure
   entry = kzalloc(sizeof(struct tar_entry), GFP_KERNEL);
   entry->header = header;
   entry->dirname = full_name;
   entry->basename = basename;
   entry->offset = offset;
-  entry->data_offset = offset + sizeof(header) + ALIGN_SECTOR(sizeof(header));
+  entry->data_offset = data_offset;
+  entry->rrw_data = rrw_data;
+  entry->chunk_count = chunk_count;
+  entry->chunks = chunks;
   entry->length = length;
   entry->mode = mode;
   entry->uid = uid;
@@ -208,7 +282,11 @@ void tar_free(struct tar_entry *entry)
 
     if (entry->rrw_data)
       kfree(entry->rrw_data);
-      
+
+    if (entry->chunks && entry->chunk_count) {
+      kfree(entry->chunks);
+    }
+
     kfree(entry);
     entry = next;
   }
