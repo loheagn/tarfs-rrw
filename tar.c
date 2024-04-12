@@ -89,6 +89,7 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
   int chunk_count = 0;
   struct tar_entry *entry = NULL;
   unsigned int length = 0;
+  unsigned int fake_length = 0;
   unsigned int mode = 0;
   uid_t uid = 0;
   gid_t gid = 0;
@@ -171,46 +172,47 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
 
   // read the data
   if (length) {
-    // if (header.typeflag == REGTYPE || header.typeflag == AREGTYPE) {
-    //   char * buf =  kmalloc(length, GFP_KERNEL);
-    //   if (tarfs_read(buf, length, data_offset, sb) != length) {
-    //     kfree(buf);
-    //     buf = NULL;
-    //   }
-    //   if (buf) {
-    //     unsigned long * real_size_ptr = (unsigned long *) buf;
-    //     size_t real_size = be64_to_cpu(*real_size_ptr);
-    //     size_t read = 8;
+    if (header.typeflag == REGTYPE || header.typeflag == AREGTYPE) {
+      fake_length = length;
+      char * buf =  kmalloc(length, GFP_KERNEL);
+      if (tarfs_read(buf, length, data_offset, sb) != length) {
+        kfree(buf);
+        buf = NULL;
+      }
+      if (buf) {
+        unsigned long * real_size_ptr = (unsigned long *) buf;
+        size_t real_size = be64_to_cpu(*real_size_ptr);
+        size_t read = 8;
 
-    //     chunk_count = real_size/RRW_BLOCK_SIZE;
-    //     if (real_size%RRW_BLOCK_SIZE) {
-    //       chunk_count++;
-    //     }
+        chunk_count = real_size/RRW_BLOCK_SIZE;
+        if (real_size%RRW_BLOCK_SIZE) {
+          chunk_count++;
+        }
 
-    //     chunks = kmalloc(sizeof(struct chunk_info)*chunk_count, GFP_KERNEL);
+        chunks = kmalloc(sizeof(struct chunk_info)*chunk_count, GFP_KERNEL);
 
-    //     struct chunk_info *chunk = chunks;
-    //     while (read < length) {
-    //       hex_encode(chunk->key, buf+read);
-    //       read += 32;
+        struct chunk_info *chunk = chunks;
+        while (read < length) {
+          hex_encode(chunk->key, buf+read);
+          read += 32;
 
-    //       unsigned long * ptr = (unsigned long *) (buf+read);
-    //       chunk->length = be64_to_cpu(*ptr);
-    //       read+=8;
+          unsigned long * ptr = (unsigned long *) (buf+read);
+          chunk->length = be64_to_cpu(*ptr);
+          read+=8;
 
-    //       chunk++;
-    //     }
+          chunk++;
+        }
 
-    //     length = real_size;
-    //     kfree(buf);
-    //   }
-    // } else {
+        length = real_size;
+        kfree(buf);
+      }
+    } else {
       rrw_data = kmalloc(length, GFP_KERNEL);
       if (tarfs_read(rrw_data, length, data_offset, sb) != length) {
         kfree(rrw_data);
         rrw_data = NULL;
       }
-    // }
+    }
   }
 
   // Fill in structure
@@ -224,6 +226,7 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
   entry->chunk_count = chunk_count;
   entry->chunks = chunks;
   entry->length = length;
+  entry->fake_length = fake_length;
   entry->mode = mode;
   entry->uid = uid;
   entry->gid = gid;
@@ -263,6 +266,9 @@ struct tar_entry *tar_open(struct super_block *sb)
     count++;
 
     length = parent->data_offset + parent->length;
+    if (parent -> fake_length > 0 ) {
+      length = parent->data_offset + parent->fake_length;
+    }
 
     // Skip leading data of the previously read entry
     offset = length + ALIGN_SECTOR(length);

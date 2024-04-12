@@ -38,6 +38,8 @@ struct tar_entry {
   /** Length of the data. */
   size_t length;
 
+  size_t fake_length;
+
   /** The inode number of the entry. */
   unsigned long inode;
 
