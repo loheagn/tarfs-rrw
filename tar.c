@@ -106,10 +106,10 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
   }
 
   // Check for the header magic value
-  // pr_info("loheagn %s %s", header.magic, OLDGNU_MAGIC);
+  // pr_info("loheagn2 %s %s", header.magic, OLDGNU_MAGIC);
   // int re = memcmp(header.magic, OLDGNU_MAGIC, sizeof(header.magic)) ;
   // if (re != 0) {
-  //   pr_info("loheagn memcmp re %d", re);
+  //   pr_info("loheagn2 memcmp re %d", re);
   //   return NULL;
   // }
 

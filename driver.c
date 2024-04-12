@@ -7,6 +7,8 @@
 
 #include <linux/blkdev.h>
 #include <linux/fs.h>
+#include <linux/path.h>
+#include <linux/namei.h>
 #include <linux/buffer_head.h>
 #include <linux/mutex.h>
 
@@ -48,42 +50,114 @@ static char* nfs_path(const char* key) {
   return result;
 }
 
-
 static size_t read_from_chunk(char __user *userbuf, struct chunk_info *chunk,  loff_t offset, size_t count) {
-  size_t want_cnt = min_t(size_t, count, chunk->length-offset);
-  char *file_path = nfs_path(chunk->key);
+  size_t no_copied = count;
+  size_t want_cnt = min_t(size_t, count, chunk->length - offset);
+  char *file_path = NULL;
+
+  
+  file_path = local_path(chunk->key);
+
+  struct path path;
+  if (kern_path("/path/to/your/file", 0, &path)) {
+    // file not exist
+    kfree(file_path);
+    file_path = nfs_path(chunk->key);
+  } else {
+    // file exists, release path
+    path_put(&path);
+  }
+  
+  // pr_info("loheagn3 want to open and read file %s, %d, %d, %d", file_path, offset, count, want_cnt);
   struct file *f = filp_open(file_path, O_RDONLY, 0);
   if (IS_ERR_OR_NULL(f)) {
-    printk(KERN_ERR "loheagn Failed to open file %s\n", file_path);
-    return 0;
+    printk(KERN_ERR "loheagn3 Failed to open file %s\n", file_path);
+    goto end;
   }
 
   char *buf = kmalloc(want_cnt, GFP_KERNEL);
   kernel_read(f, buf, want_cnt, &offset);
-  size_t no_copied = copy_to_user(userbuf, buf, want_cnt);
+  no_copied = copy_to_user(userbuf, buf, want_cnt);
   kfree(buf);
 
   filp_close(f, NULL);
+  // pr_info("loheagn3 has open and read file %s, %d, %d, %d, %d", file_path, offset, count, want_cnt, no_copied);
+
+end:
+  if (file_path) {
+    kfree(file_path);
+  }
   return want_cnt-no_copied;
+
+    // ssize_t ret;
+    // char *data;
+
+    // // 为内核缓冲区分配空间
+    // data = kmalloc(want_cnt, GFP_KERNEL);
+    // if (!data) {
+    //     return -ENOMEM;
+    // }
+
+    //  char *file_path = nfs_path(chunk->key);
+    //  struct file *f = filp_open(file_path, O_RDONLY, 0);
+
+    // // 将内核缓冲区初始化为'1'
+    // // memset(data, '1', want_cnt);
+
+    // loff_t pos = offset;
+
+    // kernel_read(f, data, want_cnt, &pos);
+
+    // kfree(file_path);
+
+    // // 将数据从内核缓冲区复制到用户缓冲区
+    // ret = copy_to_user(userbuf, data, want_cnt);
+    // if (ret == 0) {
+    //     // 所有数据都成功复制
+    //     ret = want_cnt;
+    // } else {
+    //     // copy_to_user返回未被复制的字节数
+    //     ret = -EFAULT;
+    // }
+
+    // // 释放内核缓冲区
+    // kfree(data);
+
+    // return ret;
 }
 
 static size_t read_by_chunk(char __user *userbuf,  struct tar_entry* entry, size_t advanced, loff_t offset) {
+  if (!advanced) {
+    // printk(KERN_INFO "loheagn3 advanced is 0");
+    return 0;
+  }
+
+  // pr_info("loheagn3 get into read_by_chunk");
   size_t read_cnt = 0;
   int block_idx = offset / RRW_BLOCK_SIZE;
   loff_t offset_in_block = offset%RRW_BLOCK_SIZE;
 
+  // pr_info("loheagn3 advanced %d, offset %d, block_idx %d, offset_in_block %d", advanced, offset, block_idx, offset_in_block);
+
   while (read_cnt < advanced && block_idx < entry->chunk_count) {
     struct chunk_info* chunk = entry->chunks + block_idx;
+
+    // printk(KERN_INFO "loheagn3 read_cnt %d, advanced %d, offset_in_block %d, advanced - read_cnt %d", read_cnt, advanced, offset_in_block, advanced - read_cnt);
     
     size_t this_read_cnt = read_from_chunk(userbuf+read_cnt, chunk, offset_in_block, advanced - read_cnt);
 
     read_cnt += this_read_cnt;
     offset_in_block += this_read_cnt;
+    // printk(KERN_INFO "loheagn3 read_cnt %d, updated offse_in_block %d", read_cnt, offset_in_block);
     if (offset_in_block >= RRW_BLOCK_SIZE) {
       block_idx++;
       offset_in_block = 0;
     }
+
+    // pr_info("loheagn3 %d %d block_idx %d entry_length %d", this_read_cnt, read_cnt, block_idx, entry->length);
   }
+
+  //  printk(KERN_INFO "loheagn3 exit");
 
   return advanced - read_cnt;
 }
@@ -493,8 +567,8 @@ static const struct file_operations tarfs_file_operations = {
 
 static const struct file_operations tarfs_chunk_file_operations = {
   .llseek   = generic_file_llseek,
-  // .read     = tarfs_chunk_file_read,
-  .read = tarfs_file_read,
+  .read     = tarfs_chunk_file_read,
+  // .read = tarfs_file_read,
   .open     = generic_file_open,
   .release  = tarfs_file_release,
 };
