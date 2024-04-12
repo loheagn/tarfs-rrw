@@ -107,6 +107,18 @@ static struct tar_entry *tarfs_find_by_inode(struct tar_entry *entry,
   return NULL;
 }
 
+static struct tar_entry *tarfs_find_dir_tar_entry_by_inode(struct tar_entry *entry,
+                                             unsigned long inode)
+{
+  while (entry) {
+    if (entry->inode == inode)
+      return entry;
+    entry = entry->next;
+  }
+
+  return NULL;
+}
+
 /**
  * @brief Reads from a file.
  * @param file the accessed file
@@ -250,39 +262,41 @@ static char *tarfs_full_name(struct tar_entry *entry)
 static struct inode *tarfs_build_inode(struct super_block *sb,
                                        struct tar_entry *entry)
 {
-  struct inode *inode = new_inode(sb);
-  mode_t mode = tarfs_entry_mode(entry);
-
+  struct inode *inode = iget_locked(sb, entry->inode);
   if (!inode)
     return NULL;
 
-  inode->i_ino = entry->inode;
-  inode->i_mode = mode;
-  inode->i_uid.val = entry->uid;
-  inode->i_gid.val = entry->gid;
-  inode->i_size = entry->length;
-  inode->i_atime = entry->atime;
-  inode->i_mtime = entry->mtime;
-  inode->i_ctime = entry->ctime;
+  if (inode->i_state & I_NEW) {
+    mode_t mode = tarfs_entry_mode(entry);
+    inode->i_ino = entry->inode;
+    inode->i_mode = mode;
+    inode->i_uid.val = entry->uid;
+    inode->i_gid.val = entry->gid;
+    inode->i_size = entry->length;
+    inode->i_atime = entry->atime;
+    inode->i_mtime = entry->mtime;
+    inode->i_ctime = entry->ctime;
+    switch (entry->header.typeflag) {
+      case DIRTYPE:
+        inode->i_op = &tarfs_dir_inode_operations;
+        inode->i_fop = &tarfs_dir_operations;
+        break;
+      case SYMTYPE:
+        inode->i_link = entry->header.linkname;
+        inode->i_op = &tarfs_symlink_inode_operations;
+        break;
+      case REGTYPE:
+      case AREGTYPE:
+        inode->i_op = &tarfs_file_inode_operations;
+        inode->i_fop = &tarfs_chunk_file_operations;
+        break;
+      default:
+        inode->i_op = &tarfs_file_inode_operations;
+        inode->i_fop = &tarfs_file_operations;
+        break;
+    }
 
-  switch (entry->header.typeflag) {
-    case DIRTYPE:
-      inode->i_op = &tarfs_dir_inode_operations;
-      inode->i_fop = &tarfs_dir_operations;
-      break;
-    case SYMTYPE:
-      inode->i_link = entry->header.linkname;
-      inode->i_op = &tarfs_symlink_inode_operations;
-      break;
-    case REGTYPE:
-    case AREGTYPE:
-      inode->i_op = &tarfs_file_inode_operations;
-      inode->i_fop = &tarfs_chunk_file_operations;
-      break;
-    default:
-      inode->i_op = &tarfs_file_inode_operations;
-      inode->i_fop = &tarfs_file_operations;
-      break;
+    unlock_new_inode(inode);
   }
 
   return inode;
@@ -299,7 +313,8 @@ static char *build_lookup_path(struct inode *dir, struct tar_entry *entry)
   if (dir->i_ino == ROOT_INO)
     return kzalloc(1, GFP_KERNEL);
 
-  entry = tarfs_find_by_inode(entry, dir->i_ino);
+   // find the tar_entry for the dir
+  entry = tarfs_find_dir_tar_entry_by_inode(entry, dir->i_ino);
   if (!entry) // Unknown directory?
     return NULL;
 

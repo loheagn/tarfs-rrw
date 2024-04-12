@@ -170,7 +170,6 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
   unsigned int data_offset = offset + sizeof(header) + ALIGN_SECTOR(sizeof(header));
 
   // read the data
-    pr_info("loheagn get length %d for %s/%s", length, full_name, basename);
   if (length) {
     // if (header.typeflag == REGTYPE || header.typeflag == AREGTYPE) {
     //   char * buf =  kmalloc(length, GFP_KERNEL);
@@ -234,6 +233,17 @@ struct tar_entry *tar_read_entry(struct super_block *sb, off_t offset)
   return entry;
 }
 
+struct tar_entry *find_tar_entry_by_tarname(const char* tarname, struct tar_entry *root) {
+  struct tar_entry *p = root;
+  while(p) {
+    if (!strcmp(p->header.name, tarname)) {
+      return p;
+    }
+    p = p->next;
+  }
+  return NULL;
+}
+
 /**
  * @brief Reads all file headers from the \a sb
  * @param sb the underlying super block
@@ -261,6 +271,18 @@ struct tar_entry *tar_open(struct super_block *sb)
     next = tar_read_entry(sb, offset);
     parent->next = next;
     parent = next;
+  }
+
+  struct tar_entry *p = first;
+  while (p) {
+    if (p->header.typeflag == LNKTYPE) {
+      char *link_name = p->header.linkname;
+      struct tar_entry *link_entry = find_tar_entry_by_tarname(link_name, first);
+      if (link_entry) {
+        p->inode = link_entry->inode;
+      }
+    }
+    p = p->next;
   }
 
   return first;
