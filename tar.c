@@ -37,7 +37,8 @@ const char hex_table[16] = "0123456789abcdef";
 
 static void hex_encode(char *dst, const char* src) {
   int j = 0;
-  for (int i = 0; i < 32; i++) {
+  int i = 0;
+  for (i = 0; i < 32; i++) {
     char v = *(src+i);
     dst[j++] = hex_table[v >> 4];
     dst[j++] = hex_table[v & 0xf];

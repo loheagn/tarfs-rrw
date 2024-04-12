@@ -286,7 +286,7 @@ static int tarfs_file_release(struct inode *inode, struct file *file)
  * @param flags lookup flags
  * @return \c NULL
  */
-static struct posix_acl *tarfs_get_acl(struct mnt_idmap *idmap, struct dentry *d, int flags)
+static struct posix_acl *tarfs_get_acl(struct inode *inode, int flags, bool k)
 {
   return NULL;
 }
@@ -519,7 +519,7 @@ static int tarfs_fill_sb(struct super_block *sb, void *data, int silent)
   ktime_get_coarse_real_ts64(&(root->i_atime));
   ktime_get_coarse_real_ts64(&(root->i_mtime));
   ktime_get_coarse_real_ts64(&(root->i_ctime));
-  inode_init_owner(&nop_mnt_idmap, root, NULL, ROOT_INO_MODE);
+  inode_init_owner(&init_user_ns, root, NULL, ROOT_INO_MODE);
 
   if (!(sb->s_root = d_make_root(root))) {
     pr_err("failed to create root inode");
