@@ -173,7 +173,7 @@ static struct tar_entry *tarfs_find_by_inode(struct tar_entry *entry,
                                              unsigned long inode)
 {
   while (entry) {
-    if (entry->inode == inode)
+    if (entry->inode == inode && entry->header.typeflag != LNKTYPE)
       return entry;
     entry = entry->next;
   }
