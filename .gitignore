@@ -9,3 +9,4 @@ modules.order
 mnt
 test-dir
 test.tar
+*.log
