@@ -280,6 +280,7 @@ struct tar_entry *tar_open(struct super_block *sb)
   }
 
   struct tar_entry *p = first;
+  count = 0;
   while (p) {
     if (p->header.typeflag == LNKTYPE) {
       char *link_name = p->header.linkname;
@@ -287,9 +288,17 @@ struct tar_entry *tar_open(struct super_block *sb)
       if (link_entry) {
         p->inode = link_entry->inode;
       }
+    } else {
+      count++;
     }
     p = p->next;
   }
+
+  struct sb_info *sbi = kmalloc(sizeof(struct sb_info), GFP_KERNEL);
+  sbi->total_inodes = count;
+  sbi->block_count = sb->s_count;
+  sbi->block_size = sb->s_blocksize;
+  first -> sb = sbi;
 
   return first;
 }
@@ -313,6 +322,10 @@ void tar_free(struct tar_entry *entry)
 
     if (entry->chunks && entry->chunk_count) {
       kfree(entry->chunks);
+    }
+
+    if (entry->sb) {
+      kfree(entry->sb);
     }
 
     kfree(entry);

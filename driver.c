@@ -11,6 +11,7 @@
 #include <linux/namei.h>
 #include <linux/buffer_head.h>
 #include <linux/mutex.h>
+#include <linux/statfs.h>
 
 #include "tar.h"
 
@@ -529,6 +530,34 @@ static int tarfs_fill_sb(struct super_block *sb, void *data, int silent)
   return 0;
 }
 
+int tarfs_statfs(struct dentry *dentry, struct kstatfs *buf) {
+    struct super_block *sb = dentry->d_sb;
+    struct tar_entry *root = (struct tar_entry *) sb->s_fs_info;
+
+    if(!root) {
+        pr_err("failed to get root entry");
+        return -ENOMEM;
+    }
+    if(!root->sb) {
+        pr_err("failed to get root entry sb");
+        return -ENOMEM;
+    }
+
+    struct sb_info *sbi = root->sb;
+
+    // 假设 rsb 已经在文件系统挂载时被初始化，包含了所有必要的统计信息
+    buf->f_type = RRW_MAGIC_NUMBER;  // 假设的ROMFS魔数
+    buf->f_bsize = sbi->block_size;   // 块大小
+    buf->f_blocks = sbi->block_count;  // 总块数
+    buf->f_bfree = 0;   // 只读文件系统，没有可用块
+    buf->f_bavail = 0;  // 非超级用户可用的块数同样为0
+    buf->f_files = root->sb->total_inodes;   // 总inode数
+    buf->f_ffree = 0;   // 只读文件系统，没有可用inode
+    buf->f_namelen = 99;  // 最大文件名长度
+
+    return 0;
+}
+
 /**
  * @brief Called by linux to mount \a dev.
  * @param type our file system type
@@ -556,6 +585,7 @@ static void tarfs_kill_sb(struct super_block *sb)
 }
 
 static struct super_operations tarfs_super_ops = {
+  .statfs = tarfs_statfs,
 };
 
 static const struct file_operations tarfs_file_operations = {

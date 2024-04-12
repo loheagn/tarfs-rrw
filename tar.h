@@ -7,16 +7,25 @@
 #include "gnutar.h"
 
 #define RRW_BLOCK_SIZE 4096
+#define RRW_MAGIC_NUMBER 0x72727721
 
 struct chunk_info {
   char key[65];
   size_t length;
 };
 
+struct sb_info {
+  int total_inodes;
+  unsigned long block_size;
+  int block_count;
+};
+
 /** Describes access to an entry in a tar file. */
 struct tar_entry {
   /** The entry header. */
   struct star_header header;
+
+  struct sb_info *sb;
 
   /** Path to the entry. */
   char *dirname;
